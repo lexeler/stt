@@ -1,0 +1,29 @@
+{% extends "base.html" %}
+{% block title %}Вход{% endblock %}
+
+{% block body %}
+<main class="login-shell">
+  <article class="login-card">
+    <h1 class="login-title">Расшифровщик</h1>
+    <p class="login-subtitle">Локальное распознавание речи</p>
+
+    {% if error %}
+    <div class="error-banner">Неверный логин или пароль</div>
+    {% endif %}
+
+    <form class="login-form" method="post" action="/login" autocomplete="on">
+      <div class="field">
+        <label class="field-label" for="username">Логин</label>
+        <input class="field-input" type="text" name="username" id="username"
+               autocomplete="username" required autofocus />
+      </div>
+      <div class="field">
+        <label class="field-label" for="password">Пароль</label>
+        <input class="field-input" type="password" name="password" id="password"
+               autocomplete="current-password" required />
+      </div>
+      <button class="btn-primary" type="submit">Войти</button>
+    </form>
+  </article>
+</main>
+{% endblock %}
