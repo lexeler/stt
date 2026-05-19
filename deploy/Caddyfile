@@ -1,0 +1,64 @@
+{
+	# Where Caddy stores certs (mounted volume in compose).
+	storage file_system /data
+}
+
+# dokichek.ru — reverse-proxy to the dokichek-app container that joins our
+# stt_internal docker network as "app:3000". TLS via Let's Encrypt HTTP-01
+# (router must forward 80/443 to this host). Without that the cert can't
+# be issued and HTTPS will be unavailable, but HTTP will still proxy.
+dokichek.ru, www.dokichek.ru {
+	encode gzip zstd
+	# Use the container name (unique in the docker network) rather than the
+	# generic "app" alias — texpin's own FastAPI also calls itself "app" on
+	# stt_internal, and Docker DNS would round-robin between them.
+	reverse_proxy docuchecker-app:3000 {
+		header_up X-Real-IP {remote_host}
+		header_up X-Forwarded-For {remote_host}
+		header_up X-Forwarded-Proto {scheme}
+	}
+	header {
+		Strict-Transport-Security "max-age=31536000"
+		X-Content-Type-Options nosniff
+		Referrer-Policy strict-origin-when-cross-origin
+	}
+}
+
+# Texpin STT API — pure backend, no static frontend any more. All paths
+# (/, /docs, /openapi.json, /api/*, /healthz) go straight to FastAPI.
+texpin.duckdns.org:8080 {
+	encode gzip zstd
+
+	# DNS-01 challenge — no port 80 needed at all.
+	# Token is taken from the DUCKDNS_TOKEN env var (deploy/caddy.env).
+	# Explicit resolvers — system DNS sometimes returns SERVFAIL when
+	# Caddy tries to find the SOA for *.duckdns.org. Cloudflare + Google
+	# answer correctly.
+	tls {
+		dns duckdns {env.DUCKDNS_TOKEN}
+		resolvers 1.1.1.1 8.8.8.8
+		propagation_timeout 2m
+	}
+
+	# Body size limit — must match MAX_UPLOAD_BYTES on the app side.
+	request_body {
+		max_size 2GB
+	}
+
+	reverse_proxy app:8000 {
+		header_up X-Real-IP {remote_host}
+		header_up X-Forwarded-For {remote_host}
+		header_up X-Forwarded-Proto {scheme}
+		flush_interval -1
+		transport http {
+			read_timeout 30m
+			write_timeout 30m
+		}
+	}
+
+	header {
+		Strict-Transport-Security "max-age=31536000"
+		X-Content-Type-Options nosniff
+		Referrer-Policy strict-origin-when-cross-origin
+	}
+}

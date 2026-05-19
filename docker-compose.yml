@@ -1,0 +1,90 @@
+# Production deployment for Texpin.
+# Run on nuc: cd /home/lexeler/stt && docker compose up -d --build
+#
+#   ┌─ caddy (8080 published, TLS via DuckDNS DNS-01)
+#   │     │
+#   │     ├── /api/* + /healthz  →  app container
+#   │     └── /                  →  serves web/dist directly
+#   │
+#   └─ app: FastAPI + GigaAM (loopback only, port 8000)
+
+services:
+  app:
+    build:
+      context: .
+      dockerfile: app/Dockerfile
+      additional_contexts:
+        gigaam: ./transcribe/GigaAM
+    image: texpin-app:latest
+    container_name: texpin-app
+    restart: unless-stopped
+    env_file:
+      - ./app/.env
+    environment:
+      # PyTorch использует все доступные ядра; ограничиваем до 6,
+      # чтобы 2 ядра оставались системе/Caddy/прочим процессам.
+      OMP_NUM_THREADS: "6"
+      MKL_NUM_THREADS: "6"
+    volumes:
+      # SQLite + uploads + transcripts persist on host
+      - ./app/data:/opt/app/data
+    networks: [internal]
+    expose:
+      - "8000"
+    deploy:
+      resources:
+        limits:
+          # 6 из 8 логических ядер. Доверху никогда не упирается надолго,
+          # но если упрётся — система не зависнет и SSH не отвалится.
+          cpus: "6.0"
+          memory: 10G
+        reservations:
+          memory: 2G
+    logging:
+      driver: json-file
+      options:
+        # Без этого один контейнер может за пару дней забить /var/lib/docker
+        max-size: "20m"
+        max-file: "5"
+
+  caddy:
+    build:
+      context: ./deploy
+      dockerfile: caddy.Dockerfile
+    image: texpin-caddy:latest
+    container_name: texpin-caddy
+    restart: unless-stopped
+    depends_on: [app]
+    env_file:
+      - ./deploy/caddy.env
+    ports:
+      # External port 8080 (whatever your router forwards) — texpin.duckdns.org
+      - "8080:8080"
+      # 80/443 — dokichek.ru reverse-proxy. Let's Encrypt HTTP-01 challenge
+      # uses :80; production traffic on :443. Router must forward both.
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      # Caddy's own state: certificates, OCSP cache
+      - caddy_data:/data
+      - caddy_config:/config
+    networks: [internal]
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 256M
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+networks:
+  internal:
+
+volumes:
+  caddy_data:
+  caddy_config:
